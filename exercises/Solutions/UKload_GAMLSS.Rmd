@@ -1,0 +1,182 @@
+---
+title: "GAMLSS modelling of aggregate UK electricity demand: solution"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+<!--
+%\VignetteEngine{rmarkdown::render}
+%\VignetteIndexEntry{qgam_vignette}
+-->
+  
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(out.extra='style="display:block; margin: auto"', fig.align="center", tidy=FALSE)
+```
+
+```{r setup1, include=FALSE}
+# Set workdir to source file location and then
+source(file = "my_settings.R")
+library(RhpcBLASctl); blas_set_num_threads(1)
+```
+
+1) Load data and fit a basic Gaussian GAM:
+```{r uklss1, message = F}
+library(mgcViz); library(gridExtra)
+data("UKload")
+
+form <- NetDemand~s(wM,k=20,bs='cr') + s(wM_s95,k=20,bs='cr') + 
+        s(Posan, k=30, bs = "cc") + Dow + s(Trend,k=4,bs='cr') + 
+        NetDemand.48 + Holy
+
+fit0 <- gamV(form, data = UKload, aViz = list(nsim = 50)) 
+```
+
+2. Look for patterns in the residuals conditional mean
+```{r edf2, message = F}
+pl <- list()
+pl[[1]] <- ( check1D(fit0, "wM") + l_gridCheck1D(gridFun = mean, stand = "sc") )$ggObj      # OK
+pl[[2]] <- ( check1D(fit0, "wM_s95") + l_gridCheck1D(gridFun = mean, stand = "sc") )$ggObj  # OK
+pl[[3]] <- ( check1D(fit0, "Posan") + l_gridCheck1D(gridFun = mean, stand = "sc") )$ggObj   # Not OK
+
+grid.arrange(grobs = pl, ncol = 2)
+```
+Plots for `wM` and `wM_s95` are kind of fine. But in plot for `Posan`, we have positive mean residuals in January and negative in December. Maybe using a cyclic effect for `Posan` was a mistake: the effect at the beginning of January does not match that at the end of December! This might require more careful handling of winter holidays.
+
+3. Remove cyclic smooth and use `check.gam`
+```{r edf3, message = F}
+form <- NetDemand ~ s(wM,k=20,bs='cr') + 
+                    s(wM_s95,k=20,bs='cr') + 
+                    s(Posan,bs='cr',k=30) +  # <- Changed `cc` to `cr`
+                    Dow + s(Trend,k=4) + NetDemand.48 + Holy
+
+fit1 <- gamV(form, data = UKload, aViz = list(nsim = 50)) 
+
+# Pattern in residuals mean is gone!
+check1D(fit1, "Posan") + l_gridCheck1D(gridFun = mean)
+
+AIC( fit0, fit1 ) # Some improvement
+```
+The fit seems better without the cyclic smooth. However:
+```{r edf4, message = F}
+print(plot(fit1), pages = 1)
+tmp <- check(fit1)
+```
+
+the p-value of `Posan` is quite low in `check.gam` and this effect also drops sharply in December. 
+Maybe an adaptive smooth would be better.
+
+
+4. Fit model and plot smooths
+```{r edf5, message = F}
+form <- NetDemand ~ s(wM,k=20,bs='cr') + 
+                    s(wM_s95,k=20,bs='cr') + 
+                    s(Posan,bs='ad',k=30) +  # <- Changed `cr` to `ad`
+                    Dow + s(Trend,k=4) + NetDemand.48 + Holy
+fit2 <- gamV(form, data = UKload, aViz = list(nsim = 50)) 
+
+AIC( fit1, fit2 ) # Lower AIC!
+
+plot(sm(fit2, 3), n = 400) + l_points() + l_fitLine() + l_ciLine()
+```
+We now look at the conditional variance of the residuals. First serie of checks:
+```{r edf6, message = F}
+pl <- list()
+pl[[1]] <- ( check1D(fit2, "wM") + l_densCheck(n = c(100, 100), tol = -1) )$ggObj
+pl[[2]] <- ( check1D(fit2, "wM_s95") + l_densCheck(n = c(100, 100), tol = -1) )$ggObj
+pl[[3]] <- ( check1D(fit2, "Posan") + l_densCheck(n = c(100, 100), tol = -1) )$ggObj
+
+grid.arrange(grobs = pl, ncol = 2) # Some evidence of heteroscedasticity
+```
+The residuals seem over-dispersed for $wM < 20$ and for $Posan < 0.5$ or $Posan > 0.9$. Second serie of checks: 
+```{r edf7, message = F}
+pl <- list()
+pl[[1]] <- ( check1D(fit2, "wM") + l_gridCheck1D(gridFun = sd, stand = "sc") )$ggObj
+pl[[2]] <- ( check1D(fit2, "wM_s95") + l_gridCheck1D(gridFun = sd, stand = "sc") )$ggObj
+pl[[3]] <- ( check1D(fit2, "Posan") + l_gridCheck1D(gridFun = sd, stand = "sc") )$ggObj
+
+grid.arrange(grobs = pl, ncol = 2) # More evidence of heteroscedasticity
+```
+The variance changes a lot along all the three variables. We could address this by fitting a GAMLSS model with variable scale.
+
+5. Fitting `gaulss` GAMLSS model
+```{r edf8, message = F}
+form <- list(NetDemand ~ s(wM,k=20,bs='cr') + 
+             s(wM_s95,k=20,bs='cr') + 
+             s(Posan,bs='ad',k=30) + 
+             Dow + s(Trend,k=4) + NetDemand.48 + Holy, 
+             ~ s(wM_s95,k=10,bs='cr') + 
+               s(Posan,bs='cr',k=20) + 
+               Dow)
+
+fit3 <- gamV(form, family = gaulss, data = UKload, aViz = list(nsim = 50))
+
+# Add function for simulating residuals
+fit3$family$rd <- function(mu,wt,scale){ rnorm(nrow(mu), mu[ , 1], sqrt(scale/wt)/mu[ , 2]) }
+
+AIC(fit2, fit3) 
+```
+The AIC has improved quite a lot. Now we repeat the variance checks:
+```{r edf9, message = F}
+pl <- list()
+pl[[1]] <- ( check1D(fit3, "wM") + l_gridCheck1D(gridFun = sd, stand = "sc") )$ggObj
+pl[[2]] <- ( check1D(fit3, "wM_s95") + l_gridCheck1D(gridFun = sd, stand = "sc") )$ggObj
+pl[[3]] <- ( check1D(fit3, "Posan") + l_gridCheck1D(gridFun = sd, stand = "sc") )$ggObj
+
+grid.arrange(grobs = pl, ncol = 2) 
+```
+There variance is much less variable, relative to the location-only Gaussian model.
+
+6. Looking at skewness. Now we do a global residual check using `qq`:
+```{r edf10, message = F}
+qq(fit3, method = "simul1", rep = 50) 
+```
+There is evidence of fat tails, and possibly skewness to the left. Let's look at how the skewness changes with the covariates:
+```{r edf11, message = F}
+library(e1071)
+pl <- list()
+pl[[1]] <- ( check1D(fit3, "wM_s95") + l_gridCheck1D(gridFun = skewness, stand = "sc") )$ggObj
+pl[[2]] <- ( check1D(fit3, "Posan") + l_gridCheck1D(gridFun = skewness, stand = "sc") )$ggObj
+
+grid.arrange(grobs = pl, ncol = 2)
+```
+Both plots show several departures from the model based estimates (the model is Gaussian, so the distribution of the response is symmetric). Residuals seem very strongly skewed to the left for $\text{Posan} \approx 0.25$, which corresponds roughly to March. 
+
+7. Fitting shash GAMLSS model:
+```{r edf12, message = F}
+library(mgcFam)
+form <- list(NetDemand ~ s(wM,k=20,bs='cr') + 
+               s(wM_s95,k=20,bs='cr') + 
+               s(Posan,bs='ad',k=30) + 
+               s(Trend,k=4) + NetDemand.48 + Holy + Dow, 
+             ~ s(wM_s95,k=10,bs='cr') + 
+               s(Posan,bs='cr',k=20) + 
+               Dow, 
+             ~ s(Posan, k = 10, bs='cr') + Dow, 
+             ~ 1) # If convergence problems arise use
+                  # ~ -1 + s(Holy, bs = "re", sp = 1e6)
+
+fit4 <- gamV(form, family = shash, data = UKload, 
+             aViz = list(nsim = 50))
+
+AIC(fit3, fit4) # Decreased again by a lot
+
+qq(fit4, method = "simul1", rep = 50) # Better on left tail
+```
+There is a clear improvement, especially in the left tail of the QQ-plot. Now we re-check how the skewness varies along the covariates:
+```{r edf13, message = F}
+pl <- list()
+pl[[1]] <- ( check1D(fit4, "wM_s95") + l_gridCheck1D(gridFun = skewness, stand = "sc") )$ggObj
+pl[[2]] <- ( check1D(fit4, "Posan") + l_gridCheck1D(gridFun = skewness, stand = "sc") )$ggObj
+
+grid.arrange(grobs = pl, ncol = 2) 
+```
+Along `Posan` there is a quite a lot of improvement, the points with very low skewness in March have disappeared. More limited improvement along `wM_s95`.
+
+```{r edf14, message = F}
+print(plot(fit4, allTerms = TRUE), pages = 2, ask = F)
+```

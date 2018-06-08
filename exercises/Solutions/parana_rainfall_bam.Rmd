@@ -1,0 +1,108 @@
+---
+title: "Modelling rainfall in Parana state: solution"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+<!--
+%\VignetteEngine{rmarkdown::render}
+%\VignetteIndexEntry{qgam_vignette}
+-->
+  
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(out.extra='style="display:block; margin: auto"', fig.align="center", tidy=FALSE)
+```
+
+```{r setup1, include=FALSE}
+# Set workdir to source file location and then
+source(file = "my_settings.R")
+library(RhpcBLASctl); blas_set_num_threads(1)
+```
+
+1) Load packages and plot data
+```{r bone1, message = F}
+library(mgcViz)
+load(paste0(goodLocation, "/data/parana.rda")) # change this
+
+plot(parana[parana$TIME==1, ]$LO, parana[parana$TIME==1, ]$LA, xlab = "LO", ylab = "LA") 
+```
+
+We fit a median quantile GAM with an isotropic effect for longitude and latitude, a cyclic effect for the time of the year and smooth effects for distance from the sea and elevation:
+```{r parana2, message = F}
+fit1 <- gamV(PREC ~ s(LO, LA, k = 25) + s(seaDist) + s(TIME, bs = "cc") + s(EL), 
+           data = parana)
+
+print(plot(fit1), pages = 1)
+
+qq(fit1)
+```
+
+```{r parana3, message = F}
+fit2 <- gamV(list(PREC ~ s(LO, LA, k = 25) + s(seaDist) + s(TIME, bs = "cc") + s(EL),
+                  ~ 1,
+                  ~ 1),
+           family = gevlss,
+           data = parana)
+
+print(plot(fit1), pages = 1)
+
+qq(fit2, type = "tnorm")
+```
+
+Here using an isotropic smooth form `LO` and `LA` makes sense, because the two units are similar. We can still
+check whether a tensor effect would lead to a different effect:
+```{r parana3, message = F}
+fit2 <- qgamV(PREC ~ te(LO, LA, k = c(5, 5)) + s(seaDist) + s(TIME, bs = "cc") + s(EL), 
+                       data = parana, 
+                       qu = 0.5)
+
+
+library(gridExtra)
+pl1 <- plot(sm(fit, 1)) + l_fitRaster() + l_fitContour() + theme(legend.position="bottom")
+pl2 <- plot(sm(fit2, 1)) + l_fitRaster() + l_fitContour() + theme(legend.position="bottom")
+
+grid.arrange(grobs = list(pl1$ggObj, pl2$ggObj), ncol = 2)
+```
+The two spatial effects are completely different! What happened is that the tensor product smooth got partially confounded with the distance from the sea effect. The `te` was more prone to doing this, because `seaDist` varies mostly along `LO` and it is mostly the marginal effect of `LO` that ended up offsetting the effect of `seaDist`.
+In general if your model include a bivariate effect `s(x, y)` or `te(x, y)`, you have to be very careful when including an extra effect $s(f(x, y))$ where some $f$ is some fixed function (`seaDist` here).
+
+We can of course fit this model to several quantiles:
+```{r parana4, message = F}
+fitM <- mqgamV(PREC ~ s(LO, LA, k = 25) + s(seaDist) + s(TIME, bs = "cc") + s(EL), 
+               data = parana, 
+               qu = seq(0.1, 0.9, length.out = 5), 
+               err = 0.1)
+
+plot(fitM, select = 1)
+print(plot(fitM, select = 2:4), pages = 1)
+```
+Notice that the spatial effect seems much stronger for high quantiles than for the low one. The same is true for distance from the sea and seasonality (`TIME`), while the effect of elevation is not significant from `qu = 0.9`.
+We can visualize the spatial effect in 3D as follows:
+```{r parana4b, message = F}
+plotRGL(sm(fitM[[5]], 1)) # This will not appear in the html file
+```
+
+We might also wonder whether the spatial effect changes with time. To verify this here we construct a tensor product smooth between the 2D thin-plate-spline spatial effect and the cyclical effect of time. We simplify the
+model by removing the effect of `seaDist`.
+```{r parana5, message = F}
+fit4 <- qgamV(PREC ~ te(LO, LA, TIME, d = c(2, 1), k = c(20, 10), bs = c("tp", "cc")) + s(EL), 
+              data = parana, 
+              qu = 0.9, 
+              err = 0.1)
+
+plotSlice(sm(fit4, 1), 
+          fix = list("TIME" = round(seq(1, 53, length.out = 6)))) + l_fitRaster()
+```
+
+You can plot any slice in 3D by doing:
+```{r parana6, message = F}
+plotRGL(sm(fit4, 1), fix = c("TIME" = 11)) # This will not appear in the html file
+```
+
+```
+

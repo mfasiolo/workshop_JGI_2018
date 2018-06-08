@@ -1,0 +1,155 @@
+---
+title: "Rent modelling in Munich: solution"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+<!--
+%\VignetteEngine{rmarkdown::render}
+%\VignetteIndexEntry{qgam_vignette}
+-->
+  
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(out.extra='style="display:block; margin: auto"', fig.align="center", tidy=FALSE)
+```
+
+```{r setup1, include=FALSE}
+# Set workdir to source file location and then
+source(file = "my_settings.R")
+library(RhpcBLASctl); blas_set_num_threads(1)
+```
+
+1) Load data, plot it and fit a basic GAM:
+```{r dbbmi1, message = F}
+library(mgcViz);
+load(paste0(goodLocation, "/data/munich_rent.rda")) # change this
+
+pairs(munich_rent)
+
+fit1 <- gamV(R ~ s(Fl) + s(A) + loc + B + H + L, data = munich_rent, aViz = list(nsim = 50))
+
+summary(fit1)
+```
+
+Plot smooth effects:
+```{r dbbmi2, message = F}
+print(plot(fit1), pages = 1)
+```
+
+2) Effect of `Fl` looks linear, and an interaction with location makes sense:
+```{r dbbmi2a, message = F}
+fit2 <- gamV(R ~ Fl + Fl:loc + s(A) + loc + B + H + L, data = munich_rent, aViz = list(nsim = 50))
+
+AIC(fit1, fit2)
+```
+
+We get lower AIC. See if coefficients make sense:
+```{r dbbmi3, message = F}
+summary(fit2)
+```
+Effect of floor space `Fl` must increase with the location desirability `loc`.
+
+3) Looking at variance of residuals across covariates:
+```{r dbbmi4, message = F}
+pl <- list()
+pl[[1]] <- ( check1D(fit2, "Fl") + l_gridCheck1D(gridFun = sd) )$ggObj
+pl[[2]] <- ( check1D(fit2, "A") + l_gridCheck1D(gridFun = sd) )$ggObj
+pl[[3]] <- ( check1D(fit2, "B") + l_gridCheck1D(gridFun = sd) )$ggObj
+pl[[4]] <- ( check1D(fit2, "H") + l_gridCheck1D(gridFun = sd) )$ggObj
+pl[[5]] <- ( check1D(fit2, "L") + l_gridCheck1D(gridFun = sd) )$ggObj
+pl[[6]] <- ( check1D(fit2, "loc") + l_gridCheck1D(gridFun = sd) )$ggObj
+
+library(gridExtra)
+grid.arrange(grobs = pl, ncol = 2)
+```
+The variance depends on pretty much all covariances, with possibly the exception of `A` and `loc`. Fit a Gaussian GAMLSS model:
+```{r dbbmi5, message = F}
+fit3 <- gamV(list(R ~ Fl + Fl:loc + s(A) + loc + B + H + L, 
+                    ~ Fl + Fl:loc + s(A) + loc + B + H + L), 
+             data = munich_rent, family = gaulss, aViz = list(nsim = 50))
+
+AIC(fit2, fit3)
+```
+Seems an improvements. Re-check residuals variance:
+```{r dbbmi6, message = F}
+pl <- list()
+pl[[1]] <- ( check1D(fit3, "Fl") + l_gridCheck1D(gridFun = sd) )$ggObj
+pl[[2]] <- ( check1D(fit3, "A") + l_gridCheck1D(gridFun = sd) )$ggObj
+pl[[3]] <- ( check1D(fit3, "B") + l_gridCheck1D(gridFun = sd) )$ggObj
+pl[[4]] <- ( check1D(fit3, "H") + l_gridCheck1D(gridFun = sd) )$ggObj
+pl[[5]] <- ( check1D(fit3, "L") + l_gridCheck1D(gridFun = sd) )$ggObj
+pl[[6]] <- ( check1D(fit3, "loc") + l_gridCheck1D(gridFun = sd) )$ggObj
+
+library(gridExtra)
+grid.arrange(grobs = pl, ncol = 2)
+```
+Looks better. Let's look at the significance of the effects:
+```{r dbbmi7, message = F}
+summary(fit3)
+```
+Marginal effect of `loc` is not significant in the mean model, but we leave it there because the interaction `Fl:loc3` seems important.
+
+4) Looking at residuals distribution:
+```{r dbbmi8, message = F}
+qq(fit3)
+```
+It is skewed to the right. Let's look at skewness as a function of the covariates:
+```{r dbbmi9, message = F}
+library(e1071)
+
+pl <- list()
+pl[[1]] <- ( check1D(fit3, "Fl") + l_gridCheck1D(gridFun = skewness) )$ggObj
+pl[[2]] <- ( check1D(fit3, "A") + l_gridCheck1D(gridFun = skewness) )$ggObj
+pl[[3]] <- ( check1D(fit3, "B") + l_gridCheck1D(gridFun = skewness) )$ggObj
+pl[[4]] <- ( check1D(fit3, "H") + l_gridCheck1D(gridFun = skewness) )$ggObj
+pl[[5]] <- ( check1D(fit3, "L") + l_gridCheck1D(gridFun = skewness) )$ggObj
+pl[[6]] <- ( check1D(fit3, "loc") + l_gridCheck1D(gridFun = skewness) )$ggObj
+
+library(gridExtra)
+grid.arrange(grobs = pl, ncol = 2)
+```
+
+We adopt a `shash` models and include a model for skewness:
+```{r dbbmi10, message = F}
+library(mgcFam)
+fit4 <- gamV(list(R ~ Fl + Fl:loc + s(A) + loc + B + H + L, 
+                    ~ Fl + Fl:loc + s(A) + loc + B + H + L, 
+                    ~ Fl + Fl:loc + s(A) + loc + B + H + L, 
+                    ~ 1), 
+             data = munich_rent, family = shash, aViz = list(nsim = 50))
+
+AIC(fit3, fit4)
+```
+Seems to improve things in terms of AIC. Lets re-check the skewness:
+```{r dbbmi11, message = F}
+library(e1071)
+
+pl <- list()
+pl[[1]] <- ( check1D(fit4, "Fl") + l_gridCheck1D(gridFun = skewness) )$ggObj
+pl[[2]] <- ( check1D(fit4, "A") + l_gridCheck1D(gridFun = skewness) )$ggObj
+pl[[3]] <- ( check1D(fit4, "B") + l_gridCheck1D(gridFun = skewness) )$ggObj
+pl[[4]] <- ( check1D(fit4, "H") + l_gridCheck1D(gridFun = skewness) )$ggObj
+pl[[5]] <- ( check1D(fit4, "L") + l_gridCheck1D(gridFun = skewness) )$ggObj
+pl[[6]] <- ( check1D(fit4, "loc") + l_gridCheck1D(gridFun = skewness) )$ggObj
+
+library(gridExtra)
+grid.arrange(grobs = pl, ncol = 2)
+```
+Looks better (notice that `l_gridCheck1D` by default uses 80\% intervals). Final check:
+```{r dbbmi12, message = F}
+check(fit4)
+```
+
+Residuals distribution looks good, maybe we should increase `k` for the year of construction effect `A`:
+```{r dbbmi13, message = F}
+print(plot(fit4), pages = 1)
+```
+Increasing `k` does not seem reasonable, especially for the variance and skewness where this effect is not significant:
+```{r dbbmi14, message = F}
+summary(fit4)
+```

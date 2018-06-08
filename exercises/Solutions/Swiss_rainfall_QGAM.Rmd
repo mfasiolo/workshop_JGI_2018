@@ -1,0 +1,97 @@
+---
+title: "QGAM modelling of extreme rainfall in Switzerland: solution"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+<!--
+%\VignetteEngine{rmarkdown::render}
+%\VignetteIndexEntry{qgam_vignette}
+-->
+  
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(out.extra='style="display:block; margin: auto"', fig.align="center", tidy=FALSE)
+```
+
+```{r setup1, include=FALSE}
+# Set workdir to source file location and then
+source(file = "my_settings.R")
+library(RhpcBLASctl); blas_set_num_threads(1)
+```
+
+1) Load data and fit a basic Gaussian GAM:
+```{r uklss1, message = F}
+library(mgcViz);
+library(gamair);
+data(swer)
+
+form <- exra ~ s(nao) + s(elevation) + climate.region + s(E, N) + s(year, k = 5)
+fit <- qgamV(form, data = swer, qu = 0.5)
+
+summary(fit)
+print(plot(fit), pages = 1)
+```
+
+2) Fit a smooth trend for each climate region:
+```{r rus981}
+fit2 <- qgamV(exra ~ s(nao) + s(elevation) +
+                     s(year, climate.region, bs = "fs", k = 5) + s(E, N), 
+                     data = swer, qu = 0.5)
+
+summary(fit2)
+
+AIC(fit) - AIC(fit2)
+
+plot(sm(fit2, 3)) + l_fitLine(alpha = 1)
+```
+The effect of year-by-region is using relatively few degrees of freedom (`edf`), there might have been a slight decrease in rainfall in Valais, for instance.
+
+3) Fit a 3D spatio-temporal tensor product effect:
+```{r rus98221}
+fit <- qgamV(exra ~ s(nao) + s(elevation) + climate.region +
+                    te(E, N, year, d = c(2, 1), k = c(20, 5)), 
+                    data = swer, qu = 0.5)
+
+plotSlice(x = sm(fit, 3), 
+          fix = list("year" = c(1985, 1995, 2005, 2015))) + l_fitRaster() + 
+          l_fitContour() + l_points()
+```
+There doesn't seem to be much change in the precipication pattern, maybe there is a decrease of rainfall levels in the South East (in the Canton of Ticino).
+
+4) We plot two slice through time using `rgl`:
+```{r rus6346}
+# These will not appear in the html output
+plotRGL(x = sm(fit, 3), fix = c("year" = 1985), residuals = TRUE)
+open3d()
+plotRGL(x = sm(fit, 3), fix = c("year" = 2015), residuals = TRUE)
+rgl.close()
+rgl.close()
+```
+5) Remove the tensor effect w.r.t. time and fit the model to several quantiles:
+```{r rus390}
+fitM <- mqgamV(exra ~ s(nao) + s(elevation) + climate.region + s(E, N) + s(year, k = 5), 
+               data = swer, qu = seq(0.1, 0.9, length.out = 9) )
+
+# Plot univariate smooths
+print(plot(fitM, select = c(1, 2, 4)), pages = 1)
+
+summary(fitM[[9]])
+```
+It seems that the effect of `NAO` is very weak for extreme quantiles, however the reason for this might simply be that the data is quite sparse in the tails. Also, the effect of `year` seems to be highly non-linear for quantile 0.9, but `summary` shows that this effect is not significant. 
+
+We can also plot the spatial effect:
+```{r rus626}
+print(plot(fitM, select = 3), pages = 1)
+```
+Interestingly the spatial effect is much stronger for high quantiles (extreme rainfall) than for the low ones. For quantile 0.9 the spatial effect varies between +50mm in the Canton of Ticino and -40mm in the Canton of Grisons. 
+
+Finally we can see how the climate region effect changes depending on the quantile of interest:
+```{r rus72547}
+print(plot(fitM, select = 5), pages = 1)
+```
+

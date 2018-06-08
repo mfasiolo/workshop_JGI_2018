@@ -1,0 +1,449 @@
+---
+title: "Solutions"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+<!--
+%\VignetteEngine{rmarkdown::render}
+%\VignetteIndexEntry{qgam_vignette}
+-->
+  
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(out.extra='style="display:block; margin: auto"', fig.align="center", tidy=FALSE)
+```
+
+```{r setup1, include=FALSE}
+library(RhpcBLASctl); blas_set_num_threads(1)
+```
+
+
+Bone mineral density modelling
+=======================
+
+1) Load data and packages
+```{r bone52, message = F}
+library(mgcViz)
+load("data/calcium.rda")
+
+m1 <- qgamV(bmd ~ group + age, data = calcium, qu = 0.5)
+
+summary(m1)
+```
+Placebo has a negative effect, as one would expect.
+
+2) Verify if the proportion of observations falling below the fit depends on the subject:
+```{r bone552, message = F}
+check1D(m1, calcium$person) + l_gridQCheck1D(qu = 0.5)
+```
+We have some massive departures from 0.5. We need to include a random effect for subject:
+```{r bone5252, message = F}
+m2 <- qgamV(bmd ~ group + age + s(person, bs = "re"), data = calcium, qu = 0.5)
+check1D(m2, calcium$person) + l_gridQCheck1D(qu = 0.5)
+summary(m2)
+```
+Looks much better, obviously individual differences must be taken into account. However, notice that the effect of group (placebo vs calcium supplement) is much weaker now.
+
+3) Maybe the effect of age is non-linear, we use a smooth effect here:
+```{r bone5325252, message = F}
+m3 <- qgamV(bmd ~ group + s(age) + s(person, bs = "re"), data = calcium, qu = 0.5)
+
+print(plot(m3, allTerms = T), pages = 1)
+
+AIC(m2) - AIC(m3)
+```
+Visually the effect of `age` seems fairly linear, but maybe it is slightly leveling off after ages 12, and it leads to lower AIC.
+
+4) Verify whether the effect of `age` is different between groups:
+```{r bone532525552, message = F}
+m4 <- qgamV(bmd ~ group + s(age, by = group) + s(person, bs = "re"), data = calcium, qu = 0.5)
+
+print(plot(m4, select = 1:2), pages = 1)
+```
+Difficult to say by staring at the two effects above, better to plot the difference between the two smooths directly:
+```{r bone5362652, message = F}
+plotDiff(sm(m4, 1), sm(m4, 2)) + l_fitLine() + l_ciLine()
+```
+There might actually be a difference: the group taking calcium has lower mineral density before 12 years of age, and the difference reverses afterward. The plot seems to suggest that the supplement starts having effect after 6 months of intake, and levels off after 1.5 years.
+
+5) We can fit this same model to several quantiles and plot all terms
+```{r bone5366652, message = F}
+m5 <- mqgamV(bmd ~ group + s(age, by = group) + s(person, bs = "re"), data = calcium, 
+             qu = seq(0.2, 0.8, length.out = 5))
+
+print(plot(m5, allTerms = T), pages = 1)
+```
+All effects seem quite stable across quantiles. We can still look at the differences in the age affect by doing for instance
+```{r bone555652, message = F}
+plotDiff(sm(m5[[5]], 1), sm(m5[[5]], 2)) + l_fitLine() + l_ciLine()
+```
+
+Self-paced reading latencies for Russian
+=======================
+
+1) Load data and create model formula
+```{r rus1}
+library(mgcViz);
+load("data/russian.rda")
+
+form <- RT ~ ActOrtho + ActTAM + SubjectSpeedUp + PositionInSentence + Trial
+```
+
+2) Fit a median model
+```{r rus2}
+fit <- qgamV(form, data=russian, qu=0.5)
+summary(fit)
+```
+The two neural network learning measures do not seem to be important.
+
+3) Checking proportion of observations falling below the fit along for each subject:
+```{r rus23}
+check1D(fit, x = russian$Subject) + l_gridQCheck1D(qu = 0.5) 
+```
+There are massive individuals differences: we need a random effect for subject.
+
+4) Fit the model which now includes a random effect for `Subject`:
+```{r rus42}
+form <- RT ~ ActOrtho + ActTAM + SubjectSpeedUp + PositionInSentence + Trial + s(Subject, bs = "re")
+fit2 <- qgamV(form, data=russian, qu=0.5)
+summary(fit2)
+
+check1D(fit2, x = russian$Subject) + l_gridQCheck1D(qu = 0.5) 
+
+AIC(fit) - AIC(fit2) 
+```
+The residuals look much better now, and we are getting lower AIC. Notice that now the effects of `ActOrtho` and `ActTAM` are significant.
+
+
+5) Estimate model for several quantiles:
+```{r rus3}
+qus <- seq(0.1, 0.9, length.out = 11)
+form <- RT ~ ActOrtho + ActTAM + SubjectSpeedUp + PositionInSentence + Trial + s(Subject, bs = "re")
+fit <- mqgamV(form, data=russian, qu = qus)
+
+print(plot(fit, allTerms = TRUE), pages = 1)
+```
+
+6) Refit using smooth effects for all variables:
+```{r rus4}
+qus <- seq(0.1, 0.9, length.out = 11)
+form <- RT ~ s(ActOrtho) + s(ActTAM) + s(SubjectSpeedUp) + 
+             s(PositionInSentence) + s(Trial) + s(Subject, bs = "re")
+fit2 <- mqgamV(form, data=russian, qu = qus)
+
+print(plot(fit2), pages = 2, ask = F)
+
+AIC(fit[[6]]) - AIC(fit2[[6]])
+```
+We achieve lower AIC using the smooth effects. The effect for `SubjectSpeedUp` seem very non linear for high quantiles, but it is not signiticant:
+```{r rus5}
+summary(fit[[11]])
+```
+
+
+C02 modelling
+=======================
+
+1) Load packages
+```{r co1, message = F}
+library(mgcViz); library(gamair); 
+data(co2s)
+```
+
+2) Plot data
+```{r co2, message = F}
+with(co2s, plot(c.month, co2, type="l"))
+```
+
+3) Fit model for median
+```{r co3, message = F}
+b <- qgam(co2~s(c.month, bs="cr", k=100), data=co2s, qu = 0.5, err = 0.1)
+```
+
+4) Use it for prediction
+```{r co4, message = F}
+co2plot <- function(co2s,b) {
+  fv <- predict(b,data.frame(c.month=1:543,month=c(rep(1:12,45),1:3)),se=TRUE)
+  ul <- fv$fit + 2*fv$se
+  ll <- fv$fit - 2*fv$se
+  with(co2s,plot(c.month,co2,pch=19,cex=.3,col=2,
+                 ylim=range(c(ul,ll)),xlim=c(0,550)))
+  lines(1:543,fv$fit)
+  lines(1:543,ul,lty=2)
+  lines(1:543,ll,lty=2)
+}
+
+co2plot(co2s,b) ## nonsense predictions - extrapolation artefact
+```
+
+5) Fit a better model
+```{r co5, message = F}
+b1 <- qgam(co2~s(c.month,bs="cr",k=50)+s(month,bs="cc"),data=co2s, qu = 0.5,
+           argGam = list(knots=list(month=c(1,13))), err = 0.1)
+```
+
+6) Predict again
+```{r co6, message = F}
+co2plot(co2s,b1)
+```
+This is much better, as the short-term seasonal effect has 
+been separated from long terms smooth terms, allowing longer range
+extrapolation of slow long range trend.
+
+<!-- 7) mgcViz plotting and model checking -->
+
+<!-- We convert to an `gamViz` object. We need to set `nsim = 0` because we don't know how to simulate -->
+<!-- from a `gam` model: -->
+<!-- ```{r co7, message = F} -->
+<!-- b1 <- getViz(b1, nsim = 0) -->
+<!-- print(plot(b1), pages = 1) # Plotting smooth effects -->
+<!-- ``` -->
+
+<!-- ```{r co8, message = F} -->
+<!-- qq.gam(b1) -->
+<!-- ``` -->
+
+<!-- Residuals look fairly normal, but this is only because we are fitting quantile 0.5. In fact, if we fit quantile 0.8: -->
+<!-- ```{r co9, message = F} -->
+<!-- b2 <- qgam(co2~s(c.month,bs="cr",k=50)+s(month,bs="cc"),data=co2s, qu = 0.8, -->
+<!--            argGam = list(knots=list(month=c(1,13))), err = 0.1) -->
+<!-- qq.gam( getViz(b2, nsim = 0) ) -->
+<!-- ``` -->
+
+<!-- This does not look good at all. In general, we can't expect the residuals from quantile regression to be normally distributed. -->
+
+
+Electricity load forecasting
+=======================
+
+1. Load data and create model formula
+```{r edf1, message = F}
+library(mgcViz)
+data("UKload")
+form <- NetDemand~s(wM,k=20,bs='cr') + s(wM_s95,k=20,bs='cr') + 
+        s(Posan, k=50, bs = "cr") + Dow + s(Trend,k=4,bs='cr') + 
+        NetDemand.48 + Holy
+```
+
+2. Fit model and plot smooths
+```{r edf2, message = F}
+qu <- 0.5
+fit <- qgamV(form = form, data = UKload, qu = qu, err = 0.1)
+print(plot(fit), pages = 1)
+summary(fit)
+```
+The effect of `Posan` if fairly wiggly and drops sharply in the Christmas period.
+
+3. Modify model formula and refit
+```{r edf5, message = F}
+form <- NetDemand~s(wM,k=20,bs='cr') + s(wM_s95,k=20,bs='cr') + 
+        s(Posan, bs='ad', k=50) + Dow + s(Trend,k=4) + 
+        NetDemand.48 + Holy
+
+fit <- qgamV(form = form, data = UKload, qu = qu, err = 0.1)
+print(plot(fit), pages = 1)
+summary(fit)
+```
+Now the effect of `Posan` is smoother along most of the year, but it drops around Christmas even more 
+than before. This is because many businesses are shut and people go on holiday during this period. 
+An adaptive basis makes so that we use lots of degrees of freedom where they are needed (winter holiday) 
+and few where the effect is smooth. Alternatively, we could have added a factor for the winter period 
+(although one might point out that we have already included a dummy variable indicating bank holidays).
+
+4. mqgam fit and plotting effects for each quantile
+
+```{r edf6, message = F}
+nqu <- 5
+qus <- seq(0.1, 0.9, length.out = nqu)
+fitM <- mqgamV(form = form, data = UKload, err = 0.1, qu = qus)
+
+print(plot(fitM), pages = 1)
+```
+Notice that when the effects of low and high quantiles diverge, the conditional variance of the response is increasing (other things being equal). Along `wM_s95` we can also see that at low temperatures the load distribution is skewed to the right (again, other things being equal). Looking at the plot for `Posan`, look at how the Christmas effect changes depending on the quantile. The lowest quantiles, are more strongly effected: they go down and then bounce back. We couldn't get such insights with a Gaussian GAM! 
+
+We can also look at the parametric effects:
+```{r edf7, message = F}
+print(plot(fitM, allTerms = T, select = 5:7), pages = 1)
+```
+It is interesting to notice that the holiday effect is stronger (more negative) on the low quantiles.  
+
+7. Model checking
+
+We consider the third quantile (the median), first we look at the bias caused by smooth the loss:
+```{r edf576756, message = F}
+indx <- 3
+check(fitM[[indx]])
+```
+These checks mostly focus on the fraction of residuals falling below the fitted quantile, 
+which should be close to 0.5 given that we are fitting quantile $\tau = 0.5$.
+
+We can also verify whether the fraction of points falling below the fit depart too much from $\tau = 0.5$, 
+along each covariate:
+```{r edf12, message = F}
+
+pl <- list()
+pl[[1]] <- check1D(fitM[[indx]], x = "Dow") + l_gridQCheck1D(qu = qus[indx]) 
+pl[[2]] <- check1D(fitM[[indx]], x = "wM") + l_gridQCheck1D(qu = qus[indx]) 
+pl[[3]] <- check1D(fitM[[indx]], x = "wM_s95") + l_gridQCheck1D(qu = qus[indx])
+pl[[4]] <- check1D(fitM[[indx]], x = "Posan") + l_gridQCheck1D(qu = qus[indx]) 
+
+# To plot using grid.arrange, we need to extract the ggplot objects
+library(gridExtra)
+grid.arrange(grobs = lapply(pl, "[[", 1))
+```
+Looks good, most departures are within 80 percent confidence bands.
+
+
+Reaction times for Estonian case-inflected nouns
+=======================
+
+1) Load data and fit linear model:
+```{r est1, message = F}
+library(mgcViz)
+load("data/est.rda")
+
+m1 <- qgamV(RT ~ InfFamSize + Age + LogFrequency + WordLength + Trial,
+            data=est, qu=0.5)
+
+summary(m1)
+```
+`Trial` does not seem to have a strong (linear) effect.
+
+2. Look at fraction of observations falling below the fit:
+```{r est2, message = F}
+pl <- list()
+pl[[1]] <- check1D(m1, x = "Trial") + l_gridQCheck1D(qu = 0.5) 
+pl[[2]] <- check1D(m1, x = est$Subject) + l_gridQCheck1D(qu = 0.5) 
+
+# To plot using grid.arrange, we need to extract the ggplot objects
+library(gridExtra)
+grid.arrange(grobs = lapply(pl, "[[", "ggObj"))
+```
+There is a clear non-linear pattern along `Trial`, and there are massive individual differences (depending on `subject`). 
+
+3. Add smooth for `Trial` and a random effect for `Subject`:
+```{r est3, message = F}
+m1 = qgamV(RT ~ InfFamSize + Age + LogFrequency + WordLength + s(Trial) + s(Subject, bs="re"),
+           data=est, qu=0.5)
+
+pl <- list()
+pl[[1]] <- check1D(m1, x = "Trial") + l_gridQCheck1D(qu = 0.5) 
+pl[[2]] <- check1D(m1, x = est$Subject) + l_gridQCheck1D(qu = 0.5) 
+
+grid.arrange(grobs = lapply(pl, "[[", "ggObj"))
+
+summary(m1)
+```
+There are still some departures from 0.5 along `Trial`, but there is some improvement and the non-linear effect of `Trial` seems important. The diagnostic plot along `Subject` now look very good. Notice that both effects are significant.
+
+4. Try tensor effect
+```{r est4, message = F}
+m1 <- qgamV(RT ~ InfFamSize + Age + te(LogFrequency, WordLength) + s(Trial) + s(Subject, bs="re"),
+            data=est, qu=0.5)
+
+plotRGL(sm(m1, 1), residuals = T)
+```
+The bivariate effect of `LogFrequency` and `WordLength` looks pretty linear to me! We are probably better off using two linear effects.
+
+5. Fit several quantile models
+```{r est5, message = F}
+qus <- seq(0.1, 0.9, length.out = 5)
+m1 = mqgamV(RT ~ InfFamSize + Age + LogFrequency + WordLength + s(Subject, bs="re") + s(Trial),
+            data=est, qu=qus)
+
+# Plotting all smooth effects
+print(plot(m1), pages = 1)
+```
+The effect of `Trial` shows a fast learning effect, up to around 75 trials, followed by fatigue. It is interesting to notice that the learning effect seems much faster for very slow responses (high RT, quantile 0.9).
+
+We now plot also the parametric effects:
+```{r est6, message = F}
+print(plot(m1, allTerms = TRUE, select = 3:6), pages = 1)
+```
+Notice that all the confidence intervals get wider as we move toward the highest quantile (0.9). This is normal, 
+as the response times distribution is very skewed to the right, hence the data is quite sparse around high quantile.
+The effects of word frequency and length get stronger as we look at slower responses.
+
+
+
+Rainfall modelling in Switzerland
+=======================
+
+1) Load data, create model formula and fit median GAM
+```{r rus441}
+library(mgcViz);
+library(gamair);
+data(swer)
+
+form <- exra ~ s(nao) + s(elevation) + climate.region + s(E, N) + s(year, k = 5)
+fit <- qgamV(form, data = swer, qu = 0.5)
+
+summary(fit)
+print(plot(fit), pages = 1)
+```
+
+2) Fit a smooth trend for each climate region:
+```{r rus981}
+fit2 <- qgamV(exra ~ s(nao) + s(elevation) +
+                     s(year, climate.region, bs = "fs", k = 5) + s(E, N), 
+                     data = swer, qu = 0.5)
+
+summary(fit2)
+
+AIC(fit) - AIC(fit2)
+
+plot(sm(fit2, 3)) + l_fitLine(alpha = 1)
+```
+The effect of year-by-region is using relatively few degrees of freedom (`edf`), there might have been a slight decrease in rainfall in Valais, for instance.
+
+3) Fit a 3D spatio-temporal tensor product effect:
+```{r rus98221}
+fit <- qgamV(exra ~ s(nao) + s(elevation) + climate.region +
+                    te(E, N, year, d = c(2, 1), k = c(20, 5)), 
+                    data = swer, qu = 0.5)
+
+plotSlice(x = sm(fit, 3), 
+          fix = list("year" = c(1985, 1995, 2005, 2015))) + l_fitRaster() + 
+          l_fitContour() + l_points()
+```
+There doesn't seem to be much change in the precipication pattern, maybe there is a decrease of rainfall levels in the South East (in the Canton of Ticino).
+
+4) We plot two slice through time using `rgl`:
+```{r rus6346}
+# These will not appear in the html output
+plotRGL(x = sm(fit, 3), fix = c("year" = 1985), residuals = TRUE)
+open3d()
+plotRGL(x = sm(fit, 3), fix = c("year" = 2015), residuals = TRUE)
+```
+5) Remove the tensor effect w.r.t. time and fit the model to several quantiles:
+```{r rus390}
+fitM <- mqgamV(exra ~ s(nao) + s(elevation) + climate.region + s(E, N) + s(year, k = 5), 
+               data = swer, qu = seq(0.1, 0.9, length.out = 9) )
+
+# Plot univariate smooths
+print(plot(fitM, select = c(1, 2, 4)), pages = 1)
+
+summary(fitM[[9]])
+```
+It seems that the effect of `NAO` is very weak for extreme quantiles, however the reason for this might simply be that the data is quite sparse in the tails. Also, the effect of `year` seems to be highly non-linear for quantile 0.9, but `summary` shows that this effect is not significant. 
+
+We can also plot the spatial effect:
+```{r rus626}
+print(plot(fitM, select = 3), pages = 1)
+```
+Interestingly the spatial effect is much stronger for high quantiles (extreme rainfall) than for the low ones. For quantile 0.9 the spatial effect varies between +50mm in the Canton of Ticino and -40mm in the Canton of Grisons. 
+
+Finally we can see how the climate region effect changes depending on the quantile of interest:
+```{r rus72547}
+print(plot(fitM, select = 5), pages = 1)
+```
+
+
+
+
+

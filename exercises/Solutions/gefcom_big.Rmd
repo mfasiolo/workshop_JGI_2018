@@ -1,0 +1,197 @@
+---
+title: "Big GAM modelling of aggregate electricity demand in the UK: solution"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+<!--
+%\VignetteEngine{rmarkdown::render}
+%\VignetteIndexEntry{qgam_vignette}
+-->
+  
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(out.extra='style="display:block; margin: auto"', fig.align="center", tidy=FALSE)
+```
+
+```{r setup1, include=FALSE}
+# Set workdir to source file location and then
+source(file = "my_settings.R")
+library(RhpcBLASctl); blas_set_num_threads(1)
+```
+
+1) Load data and fit a basic Gaussian GAM:
+```{r gefbig1, message = F}
+library(mgcViz)
+load(paste0(goodLocation, "/data/gefcom_big.rda")) # change this
+
+fit1 <- bamV(NetDemand ~ Dow +
+               NetDemand.24 +
+               s(Trend, k = 6, bs = "cr") + 
+               s(wM, bs = "cr") + 
+               s(Instant, bs = "cr") +
+               s(wM_s95, bs = 'cr') + 
+               s(Posan, bs='cc', k=20),
+             data = gefcom_big, 
+             aGam = list(discrete = TRUE, nthreads = 2), 
+             aViz = list(nsim = 50))
+
+print(plot(fit1, allTerms = TRUE), pages = 1)
+```
+
+2. Check if bases are large enough:
+```{r bam2, message = F}
+tmp <- check(fit1) 
+```
+The p-values for `Trend` and `Posan` are very low, suggesting that we should increase the dimension of their spline bases (by increasing `k`). However, if we do this for `Tendance` (which is simply a time counter) we will ultimately end up interpolating the data! Increasing the basis dimension for `Posan` might lead to a similar problem.
+
+The p-values of `wM`, `wM_s95` and `Instant` are not low, but the Effective Degrees of Freedom (EDF) of the fitted smooths is very close to the bases dimension (`k'`). Hence, we might want to increase $k$ for these effects. Before doing so, we look for residuals patterns along these covariates and `NetDemand.24`:
+```{r bam3, message = F}
+library(gridExtra)
+pl <- lapply(c("NetDemand.24", "wM", "wM_s95", "Instant"), 
+             function(.nam){
+               ( check1D(fit1, x = .nam) + l_gridCheck1D(n = 40) )$ggObj
+             })
+
+grid.arrange(grobs = pl, ncol = 2)
+```
+There is clearly a systematic pattern along `NetDemand.24`, we should clearly use a smooth effect for this variable! Also, `wM` and `wM_s95` show large but irregular deviations,  while also `Instant` we see large deviations in during the night (roughly 8am and 6pm).
+
+3. Re-fit with larger bases, re-check and look for interactions
+```{r bam4, message = F}
+fit2 <- bamV(NetDemand ~ Dow +
+             s(NetDemand.24, bs = "cr", k = 20) +
+             s(Trend, k = 6, bs = "cr") + 
+             s(wM, bs = "cr", k = 20) + 
+             s(Instant, bs = "cr", k = 20) +
+             s(wM_s95, bs = 'cr', k = 20) + 
+             s(Posan, bs='cc', k = 30),
+           data = gefcom_big, 
+             aGam = list(discrete = TRUE, nthreads = 2), 
+             aViz = list(nsim = 50))
+
+tmp <- check(fit2) # Looks better
+```
+EDF now lower then `k'` for all variables, apart from `Tendance` and `Posan` (but this is ok, see above).
+
+```{r bam4b, message = F}
+# 1D residuals checks
+pl <- lapply(c("NetDemand.24", "wM", "wM_s95", "Instant"), 
+       function(.nam){
+         ( check1D(fit2, x = .nam) + l_gridCheck1D(n = 40) )$ggObj
+       })
+
+grid.arrange(grobs = pl, ncol = 2)
+```
+
+Output of \verb|check1D| looks better than before, especially along `Instant` and `NetDemand.24` (however we still have some large deviations for low `NetDemand.24`).
+
+4) We start by looking for interactions with `Instant`:
+```{r bam5, message = F}
+pl <- lapply(c("NetDemand.24", "wM", "wM_s95", "Posan"), 
+             function(.nam){
+               ( check2D(fit2, x1 = .nam, x2 = "Instant") + l_gridCheck2D() )$ggObj
+             })
+
+grid.arrange(grobs = pl, ncol = 2)
+```
+
+All of plots show systematic patterns: all interactions with `Instant` need to be included.
+
+```{r bam7, message = F}
+fit3 <- bamV(NetDemand ~ Dow +
+               s(NetDemand.24, bs = "cr", k = 20) +
+               s(Trend, k = 6, bs = "cr") + 
+               s(wM, bs = "cr", k = 20) + 
+               s(Instant, bs = "cr", k = 20) +
+               s(wM_s95, bs = 'cr', k = 20) + 
+               s(Posan, bs='cc', k=30) +
+               ti(NetDemand.24, Instant, k = c(15, 15), bs = c("cr", "cr")) +
+               ti(wM, Instant, k = c(10, 10), bs = c("cr", "cr")) +
+               ti(wM_s95, Instant, k = c(15, 15), bs = c("cr", "cr")) +
+               ti(Posan, Instant, k = c(10, 15), bs = c("cc", "cr")),
+             data = gefcom_big, 
+             aGam = list(discrete = TRUE, nthreads = 2), 
+             aViz = list(nsim = 50))
+
+AIC(fit2, fit3)
+```
+
+Now lets repeat the visual checks
+```{r bam8, message = F}
+pl <- lapply(c("NetDemand.24", "wM", "wM_s95", "Posan"), 
+             function(.nam){
+               ( check2D(fit3, x1 = .nam, x2 = "Instant") + l_gridCheck2D() )$ggObj
+             })
+
+grid.arrange(grobs = pl, ncol = 2)
+```
+
+Good, the residual patterns are much less visible. 
+
+
+5. We start by plotting all the marginal effects on one page:
+```{r bam10, message = F}
+print(plot(fit3, n = 200, select = 1:6), pages = 1)
+```
+
+Looks good, but one might want to have a closer look at what happens along `Posan`, which is quite wiggly. Maybe it is possible to do something better to taking into account the effect of holidays?  Now we do the same with the 2D interactions:
+```{r bam12, message = F}
+print(plot(fit3, n2 = 100, select = 7:10) + theme(legend.position="none"), 
+      pages = 1)
+```
+
+Notice that we used `theme` to remove the legend. We now produce some customized plots:
+```{r bam13, message = F}
+pl <- lapply(7:10, 
+             function(.ii){
+               ( plot(sm(fit3, .ii), too.far = -1, maxpo = 500) + 
+                 l_fitRaster(noiseup = T, pTrans = zto1(0.05, 3, 0.1)) + 
+                 l_fitContour() + l_points() )$ggObj
+             })
+
+grid.arrange(grobs = pl, ncol = 2)
+```
+
+Here we used `noiseup = TRUE` to add noise to the fitted surface, which gives an idea about the uncertainty in each effect. We also used `pTrans` to make so that the opacity of the heatmap is proportional to the statistical significance of the effect at each locations. We also set `too.far = -1` to avoid having grey areas far from design points, and we added a sub-sample of only 500 design points using `maxpo = 500`.
+
+This code produces some RGL plots, which unfortunately will not appear in the html file:
+```{r bam14, message = F}
+plotRGL(sm(fit3, 7), residuals = T)
+clear3d()
+plotRGL(sm(fit3, 8), residuals = T)
+clear3d()
+plotRGL(sm(fit3, 9), residuals = T)
+clear3d()
+plotRGL(sm(fit3, 10), residuals = T)
+rgl.close()
+```
+
+6. We can look at the variance as follows
+```{r bam15, message = F}
+pl <- lapply(c("NetDemand.24", "wM", "wM_s95", "Posan"), 
+             function(.nam){
+               ( check2D(fit3, x1 = .nam, x2 = "Instant") + 
+                   l_gridCheck2D(gridFun = sd) )$ggObj
+             })
+
+grid.arrange(grobs = pl, ncol = 2)
+```
+
+The variance varies strongly along `Instant`, and it seems to peak around 8am (especially in the winter and at low temperatures). We do the same for skewness:
+```{r bam16, message = F}
+library(e1071)
+pl <- lapply(c("NetDemand.24", "wM", "wM_s95", "Posan"), 
+             function(.nam){
+               ( check2D(fit3, x1 = .nam, x2 = "Instant") + 
+                   l_gridCheck2D(gridFun = skewness) )$ggObj
+             })
+
+grid.arrange(grobs = pl, ncol = 2)
+```
+
+It seems that the load distribution is positively skewed at night. We might be able to take this (and the variance) pattern into account using a GAMLSS model (e.g. usign the `gaulss` or `shash` families). But this would take longer to fit, because `bam` is unavailable for such models.

@@ -1,0 +1,99 @@
+---
+title: "Electricity demand modelling on GEFCom14 data: solution"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+<!--
+%\VignetteEngine{rmarkdown::render}
+%\VignetteIndexEntry{qgam_vignette}
+-->
+  
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(out.extra='style="display:block; margin: auto"', fig.align="center", tidy=FALSE)
+```
+
+```{r setup1, include=FALSE}
+# Set workdir to source file location and then
+source(file = "my_settings.R")
+library(RhpcBLASctl); blas_set_num_threads(1)
+```
+
+1) Load data and fit a basic Gaussian GAM:
+```{r gefsmall1, message = F}
+library(mgcViz)
+load(paste0(goodLocation, "/data/gefcom_small.rda")) # change this
+
+fit1 <- gamV(NetDemand ~ NetDemand.24 + Dow + Trend + s(wM) + s(wM_s95) + s(Posan, bs = "cc"), 
+             data = gefcom_small, aViz = list(nsim = 50))
+
+print(plot(fit1, allTerms = TRUE), pages = 1)
+```
+
+2) We check the mean residuals as a function of time (`trend`):
+```{r gefsmall2, message = F}
+check1D(fit1, "Trend") + l_gridCheck1D()
+```
+
+The long term trend seems to be non-linear. We also check whether we should increase the bases dimension:
+```{r gefsmall3, message = F}
+check(fit1)
+```
+
+`edf` is quite close to `k'` for all effects, and we get a very low p-value for `wM`. We have to increase `k` a bit.
+
+3) Re-fit with a smooth long-term trend and increase basis dimension:
+```{r gefsmall4, message = F}
+fit2 <- gamV(NetDemand ~ NetDemand.24 + Dow + s(Trend, k = 6) + s(wM, k = 20) + 
+             s(wM_s95, k = 15) + s(Posan, k = 15, bs = "cc"), data = gefcom_small, 
+             aViz = list(nsim = 50))
+
+AIC(fit1, fit2)
+
+check1D(fit2, "Trend") + l_gridCheck1D()
+```
+
+AIC is much inproved, and there is no systematic residual pattern along `trend`. We recheck using `check`:
+```{r gefsmall4a, message = F}
+check(fit2)
+```
+Maybe we should increase the basis dimension for `wM` a bit more. But increasing the basis dimension for `Trend` too much is definitely not a good idea, because we would end up interpolating the data. 
+
+4) Look at a qq-plot:
+```{r gefsmall5, message = F}
+qq(fit2)
+```
+
+We have some fairly fat tails, maybe better to adopt a scaled student-t distribution:
+```{r gefsmall6, message = F}
+fit3 <- gamV(NetDemand ~ NetDemand.24 + Dow + s(Trend, k = 6) + s(wM, k = 20) + 
+             s(wM_s95, k = 15) + s(Posan, k = 15, bs = "cc"), data = gefcom_small, 
+             family = scat,
+             aViz = list(nsim = 50))
+
+AIC(fit2, fit3)
+
+qq(fit3)
+```
+
+Better AIC, and the QQ-plot looks much better. 
+
+5) Worth considering the log-link, as an alternative to the identity link:
+```{r gefsmall7, message = F}
+fit4 <- gamV(NetDemand ~ NetDemand.24 + Dow + s(Trend, k = 6) + s(wM, k = 20) + 
+             s(wM_s95, k = 15) + s(Posan, k = 15, bs = "cc"), 
+             data = gefcom_small, 
+             family = scat(link = log),
+             aViz = list(nsim = 50))
+
+AIC(fit3, fit4)
+```
+Seems better in terms of AIC. We finally plot the fitted effects:
+```{r gefsmall8, message = F}
+print(plot(fit4, allTerms = TRUE), pages = 1)
+```

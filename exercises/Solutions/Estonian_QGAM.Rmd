@@ -1,0 +1,94 @@
+---
+title: "Reaction times for Estonian case-inflected nouns: solution"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+<!--
+%\VignetteEngine{rmarkdown::render}
+%\VignetteIndexEntry{qgam_vignette}
+-->
+  
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(out.extra='style="display:block; margin: auto"', fig.align="center", tidy=FALSE)
+```
+
+```{r setup1, include=FALSE}
+# Set workdir to source file location and then
+source(file = "my_settings.R")
+library(RhpcBLASctl); blas_set_num_threads(1)
+```
+
+1) Load data and fit a basic Gaussian GAM:
+```{r uklss1, message = F}
+library(mgcViz);
+load(paste0(goodLocation, "/data/est.rda"))
+
+m1 <- qgamV(RT ~ InfFamSize + Age + LogFrequency + WordLength + Trial,
+            data=est, qu=0.5)
+
+summary(m1)
+```
+`Trial` does not seem to have a strong (linear) effect.
+
+2. Look at fraction of observations falling below the fit:
+```{r est2, message = F}
+pl <- list()
+pl[[1]] <- check1D(m1, x = "Trial") + l_gridQCheck1D(qu = 0.5) 
+pl[[2]] <- check1D(m1, x = est$Subject) + l_gridQCheck1D(qu = 0.5) 
+
+# To plot using grid.arrange, we need to extract the ggplot objects
+library(gridExtra)
+grid.arrange(grobs = lapply(pl, "[[", "ggObj"))
+```
+There is a clear non-linear pattern along `Trial`, and there are massive individual differences (depending on `subject`). 
+
+3. Add smooth for `Trial` and a random effect for `Subject`:
+```{r est3, message = F}
+m1 = qgamV(RT ~ InfFamSize + Age + LogFrequency + WordLength + s(Trial) + s(Subject, bs="re"),
+           data=est, qu=0.5)
+
+pl <- list()
+pl[[1]] <- check1D(m1, x = "Trial") + l_gridQCheck1D(qu = 0.5) 
+pl[[2]] <- check1D(m1, x = est$Subject) + l_gridQCheck1D(qu = 0.5) 
+
+grid.arrange(grobs = lapply(pl, "[[", "ggObj"))
+
+summary(m1)
+```
+There are still some departures from 0.5 along `Trial`, but there is some improvement and the non-linear effect of `Trial` seems important. The diagnostic plot along `Subject` now look very good. Notice that both effects are significant.
+
+4. Try tensor effect
+```{r est4, message = F}
+m1 <- qgamV(RT ~ InfFamSize + Age + te(LogFrequency, WordLength) + s(Trial) + s(Subject, bs="re"),
+            data=est, qu=0.5)
+
+plotRGL(sm(m1, 1), residuals = T)
+rgl.close()
+```
+The bivariate effect of `LogFrequency` and `WordLength` looks pretty linear to me! We are probably better off using two linear effects.
+
+5. Fit several quantile models
+```{r est5, message = F}
+qus <- seq(0.1, 0.9, length.out = 5)
+m1 = mqgamV(RT ~ InfFamSize + Age + LogFrequency + WordLength + s(Subject, bs="re") + s(Trial),
+            data=est, qu=qus)
+
+# Plotting all smooth effects
+print(plot(m1), pages = 1)
+```
+The effect of `Trial` shows a fast learning effect, up to around 75 trials, followed by fatigue. It is interesting to notice that the learning effect seems much faster for very slow responses (high RT, quantile 0.9).
+
+We now plot also the parametric effects:
+```{r est6, message = F}
+print(plot(m1, allTerms = TRUE, select = 3:6), pages = 1)
+```
+Notice that all the confidence intervals get wider as we move toward the highest quantile (0.9). This is normal, 
+as the response times distribution is very skewed to the right, hence the data is quite sparse around high quantile.
+The effects of word frequency and length get stronger as we look at slower responses.
+

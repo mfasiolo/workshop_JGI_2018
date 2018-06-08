@@ -1,0 +1,140 @@
+---
+title: "Individual electricity demand modelling: solution"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+<!--
+%\VignetteEngine{rmarkdown::render}
+%\VignetteIndexEntry{qgam_vignette}
+-->
+  
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(out.extra='style="display:block; margin: auto"', fig.align="center", tidy=FALSE)
+```
+
+```{r setup1, include=FALSE}
+# Set workdir to source file location and then
+source(file = "my_settings.R")
+library(RhpcBLASctl); blas_set_num_threads(1)
+```
+
+1) Load data and fit a basic Gaussian GAM:
+```{r indiv1, message = F}
+library(mgcViz)
+load(paste0(goodLocation, "/data/Ind_elect.rda")) # change this
+
+fit1 <- bamV(load ~ dow + ID + s(instant) + s(temp) + s(day), data = indElec, 
+             aViz = list(nsim = 50))
+
+print(plot(fit1, allTerms = TRUE), pages = 1)
+
+summary(fit1)
+```
+All effects seem important, according to the p-values. 
+
+2) Now we use `check2D` to look at the mean residuals across two variables, we are looking for 
+interactions between `ID` and some of the other covariates:
+```{r indiv1a, message = F}
+pl <- list()
+pl[[1]] <- check2D(fit1, "instant", "ID") + l_gridCheck2D(bw = c(NA, 1))
+pl[[2]] <- check2D(fit1, "temp", "ID") + l_gridCheck2D(bw = c(NA, 1))
+pl[[3]] <- check2D(fit1, "day", "ID") + l_gridCheck2D(bw = c(NA, 5))
+
+library(gridExtra)
+grid.arrange(grobs = lapply(pl, "[[", "ggObj"), ncol = 2)
+```
+Here the mean residuals are normalized using simulations from the model. Hence values <-2 or >2 are important, and here we have some massive deviations from zero. Costumer 27 seems particularly difficult to forecast:
+```{r indiv1c, message = F}
+in27 <- which(indElec$ID == 27)
+par(mfrow = c(1, 2))
+plot(indElec$instant[in27], indElec$load[in27])
+plot(indElec$temp[in27], indElec$load[in27])
+```
+Most of the consumption happens before 7 am, and at temperatures < 12 degrees. Maybe this is due to storage heating?
+
+3) Fit model with by-factor smooth for each costumer, but same smoothing parameter for each by-factor effect:
+```{r indiv2, message = F}
+fit2 <- bamV(load ~ dow + ID + 
+                    s(instant, by = ID, id = 1) + 
+                    s(temp, by = ID, id = 2) + 
+                    s(day, by = ID, id = 3), data = indElec, 
+             aViz = list(nsim = 50), aGam = list(discrete = TRUE))
+
+summary(fit2)
+
+AIC(fit1, fit2)
+```
+This seems to be a very serious improvement in AIC! We repeat the residual checks:
+```{r indiv2a, message = F}
+pl <- list()
+pl[[1]] <- check2D(fit2, "instant", "ID") + l_gridCheck2D(bw = c(NA, 1))
+pl[[2]] <- check2D(fit2, "temp", "ID") + l_gridCheck2D(bw = c(NA, 1))
+pl[[3]] <- check2D(fit2, "day", "ID") + l_gridCheck2D(bw = c(NA, 5))
+
+library(gridExtra)
+grid.arrange(grobs = lapply(pl, "[[", "ggObj"), ncol = 2)
+```
+Better than before, but we still have some very large deviations.
+
+4) Now we look at whether we should change the bases dimension:
+```{r indiv3, message = F}
+check(fit2)
+```
+
+The bases for `day` might be a bit too small, and possibly also the one for `instant`. We try to increase their dimension:
+```{r indiv4, message = F}
+fit3 <- bamV(load ~ dow + ID + 
+                    s(instant, by = ID, id = 1, k = 20) + 
+                    s(temp, by = ID, id = 2) + 
+                    s(day, by = ID, id = 3, k = 20), data = indElec, 
+             aViz = list(nsim = 50), aGam = list(discrete = TRUE))
+
+AIC(fit2, fit3)
+
+check(fit3)
+```
+AIC is much lower, and the p-values reported by `check` are not significant now.
+
+4) We might consider including the effect of the lagged smoothed load:
+```{r indiv5, message = F}
+check2D(fit3, indElec$load48SM, indElec$ID) + l_gridCheck2D(bw = c(NA, 0.1))
+```
+
+Smoothed load seems to be important, especially for households 2 and 18. We include a by-factor effect of smoothed load:
+```{r indiv6, message = F}
+fit4 <- bamV(load ~ dow + ID + 
+                    s(instant, by = ID, id = 1, k = 20) + 
+                    s(temp, by = ID, id = 2) + 
+                    s(day, by = ID, id = 3, k = 20) + 
+                    s(load48SM, by = ID, id = 4), data = indElec, 
+             aViz = list(nsim = 50), aGam = list(discrete = TRUE))
+
+AIC(fit3, fit4)
+```
+
+Big improvement in AIC. We re-check the mean of the residuals:
+```{r indiv7, message = F}
+check2D(fit4, indElec$load48SM, indElec$ID) + l_gridCheck2D()
+```
+Deviations are now in the range [-4,+4], still large, but better than before. 
+
+5) Looking at some individual consumptions and predictions. Change the loop indexes to look at different costumers:
+```{r indiv8, message = F}
+par(mfrow = c(3, 3), mar = c(2.1, 4.1, 1.1, 2.1))
+for(ID in 1:9){
+  ids <- which( indElec$ID == ID )
+  subD <- indElec[ids, ]
+  subP <- fit4$fitted.values[ids]
+  
+  kk <- 1:200
+  plot(subD$load[kk])
+  lines(subP[kk], col = 2)
+}
+```
+Costumer 3 is arguably quite hard to forecast!

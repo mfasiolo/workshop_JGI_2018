@@ -1,0 +1,70 @@
+---
+title: "Bone mineral density modelling: solution"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+<!--
+%\VignetteEngine{rmarkdown::render}
+%\VignetteIndexEntry{qgam_vignette}
+-->
+  
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(out.extra='style="display:block; margin: auto"', fig.align="center", tidy=FALSE)
+```
+
+```{r setup1, include=FALSE}
+# Set workdir to source file location and then
+source(file = "my_settings.R")
+library(RhpcBLASctl); blas_set_num_threads(1)
+```
+
+1) Load data and packages
+```{r bone1, message = F}
+library(mgcViz)
+load(paste0(goodLocation, "/data/calcium.rda")) # change this
+
+m1 <- gamV(bmd ~ group + age, data = calcium, aViz = list(nsim = 100))
+
+summary(m1)
+```
+Placebo has a negative effect, as one would expect.
+
+2) Verify if the residual mean depends on the subject:
+```{r bone552, message = F}
+check1D(m1, calcium$person) + l_gridCheck1D(mean)
+```
+We have some massive departures from 0, we need to include a random effect for subject:
+```{r bone5252, message = F}
+m2 <- gamV(bmd ~ group + age + s(person, bs = "re"), data = calcium, aViz = list(nsim = 100))
+check1D(m2, calcium$person) + l_gridCheck1D(mean)
+summary(m2)
+```
+Looks much better, obviously individual differences must be taken into account. However, notice that the effect of group (placebo vs calcium supplement) is much weaker now.
+
+3) Maybe the effect of age is non-linear, we use a smooth effect here:
+```{r bone5325252, message = F}
+m3 <- gamV(bmd ~ group + s(age) + s(person, bs = "re"), data = calcium)
+
+print(plot(m3, allTerms = T), pages = 1)
+
+AIC(m2, m3)
+```
+Visually the effect of `age` seems fairly linear, but maybe it is slightly leveling off after ages 12. The AICs are comparable.
+
+4) Verify whether the effect of `age` is different between groups:
+```{r bone532525552, message = F}
+m4 <- gamV(bmd ~ group + s(age, by = group) + s(person, bs = "re"), data = calcium)
+
+print(plot(m4, select = 1:2), pages = 1)
+```
+Difficult to say by staring at the two effects above, better to plot the difference between the two smooths directly:
+```{r bone5362652, message = F}
+plotDiff(sm(m4, 1), sm(m4, 2)) + l_fitLine() + l_ciLine()
+```
+There might actually be a difference: BMD increases faster in the group taking the supplement, and the effect might be levelling off after 12 years of age.

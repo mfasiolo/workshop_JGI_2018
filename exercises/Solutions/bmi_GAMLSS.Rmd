@@ -1,0 +1,121 @@
+---
+title: "BMI of Dutch boys: solution"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+<!--
+%\VignetteEngine{rmarkdown::render}
+%\VignetteIndexEntry{qgam_vignette}
+-->
+  
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(out.extra='style="display:block; margin: auto"', fig.align="center", tidy=FALSE)
+```
+
+```{r setup1, include=FALSE}
+# Set workdir to source file location and then
+source(file = "my_settings.R")
+library(RhpcBLASctl); blas_set_num_threads(1)
+```
+
+1) Load data and plot it:
+```{r dbbmi1, message = F}
+library(mgcViz);
+load(paste0(goodLocation, "/data/dbbmi.rda")) # change this
+
+plot(bmi~age, data=dbbmi)
+```
+
+Fit basic gaussian GAM and plot predictions:
+```{r dbbmi2, message = F}
+fit1 <- gamV(bmi ~ s(age), data = dbbmi, aViz = list(nsim = 50))
+
+plot(bmi~age, data=dbbmi)
+lines(dbbmi$age, predict(fit1), col = 2)
+```
+
+2) Residuals checks
+```{r dbbmi3, message = F}
+qq(fit1)
+```
+
+Seems that residuals are skewed to the right. Let's do a conditional residual variance check:
+```{r dbbmi3a, message = F}
+check1D(fit1, "age") + l_gridCheck1D(gridFun = sd)
+```
+The variance of the residuals is increasing with age. Fit a model where we are modelling also the variance:
+```{r dbbmi4, message = F}
+fit2 <- gamV(list(bmi ~ s(age), ~ s(age)), data = dbbmi, family = gaulss, aViz = list(nsim = 50))
+```
+
+Repeat the check:
+```{r dbbmi5, message = F}
+qq(fit2)
+check1D(fit2, "age") + l_gridCheck1D(gridFun = sd)
+```
+
+Non-constant variance problems seems more or less solved, but the residuals are still skewed to the right. 
+
+3) Check whether we should increase bases dimension:
+```{r dbbmi6, message = F}
+tmp <- check(fit2)
+```
+It seems so. It seems that `bmi` increase sharply at is the first year of life, maybe we should adopt an adaptive smooth for the mean model? 
+```{r dbbmi7, message = F}
+fit3 <- gamV(list(bmi ~ s(age, k = 20, bs = "ad"), ~ s(age, k = 20)), 
+             data = dbbmi, family = gaulss, aViz = list(nsim = 50))
+
+AIC(fit2, fit3)
+```
+AIC improved and bases should be large enough now:
+```{r dbbmi8, message = F}
+tmp <- check(fit3)
+```
+
+Let's look at the fitted effects:
+```{r dbbmi9, message = F}
+print(plot(fit3), pages = 1)
+```
+Indeed, using an adaptive smooth made sense here.
+
+4) Check skewness:
+```{r dbbmi10, message = F}
+library(e1071)
+check1D(fit3, "age") + l_gridCheck1D(gridFun = skewness)
+```
+
+```{r dbbmi11, message = F}
+library(mgcFam)
+fit4 <- gamV(list(bmi ~ s(age, k = 20, bs = "ad"), ~ s(age, k = 20), ~ s(age), ~ 1), 
+             data = dbbmi, family = shash, aViz = list(nsim = 50))
+
+AIC(fit3, fit4)
+
+qq(fit4)
+```
+Looks much better! And we get lower AIC. No re-plot smooth effects:
+```{r dbbmi12, message = F}
+print(plot(fit4), pages = 1)
+```
+
+Final check
+```{r dbbmi12a, message = F}
+check(fit4)
+```
+it all looks good.
+
+5) Plotting quantiles:
+```{r dbbmi13, message = F}
+plot(bmi~age, data=dbbmi, col = "grey")
+pr <- predict(fit4)
+for(.q in c(0.01, 0.25, 0.5, 0.75, 0.99)){
+  q_hat <- fit4$family$qf(.q, pr, wt = fit4$prior.weights, scale = 1)
+  lines(dbbmi$age, q_hat, col = 2)
+}
+```

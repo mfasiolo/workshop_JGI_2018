@@ -1,0 +1,103 @@
+---
+title: "Quantile modelling of UK electricity demand: solution"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+<!--
+%\VignetteEngine{rmarkdown::render}
+%\VignetteIndexEntry{qgam_vignette}
+-->
+  
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(out.extra='style="display:block; margin: auto"', fig.align="center", tidy=FALSE)
+```
+
+```{r setup1, include=FALSE}
+# Set workdir to source file location and then
+source(file = "my_settings.R")
+library(RhpcBLASctl); blas_set_num_threads(1)
+```
+
+1) Load data and fit a basic Gaussian GAM:
+```{r uklss1, message = F}
+library(mgcViz); library(gridExtra)
+data("UKload")
+form <- NetDemand~s(wM,k=20,bs='cr') + s(wM_s95,k=20,bs='cr') + 
+        s(Posan, k=50, bs = "cr") + Dow + s(Trend,k=4,bs='cr') + 
+        NetDemand.48 + Holy
+```
+
+2. Fit model and plot smooths
+```{r edf2, message = F}
+qu <- 0.5
+fit <- qgamV(form = form, data = UKload, qu = qu, err = 0.1)
+print(plot(fit), pages = 1)
+summary(fit)
+```
+The effect of `Posan` if fairly wiggly and drops sharply in the Christmas period.
+
+3. Modify model formula and refit
+```{r edf5, message = F}
+form <- NetDemand~s(wM,k=20,bs='cr') + s(wM_s95,k=20,bs='cr') + 
+        s(Posan, bs='ad', k=50) + Dow + s(Trend,k=4) + 
+        NetDemand.48 + Holy
+
+fit <- qgamV(form = form, data = UKload, qu = qu, err = 0.1)
+print(plot(fit), pages = 1)
+summary(fit)
+```
+Now the effect of `Posan` is smoother along most of the year, but it drops around Christmas even more 
+than before. This is because many businesses are shut and people go on holiday during this period. 
+An adaptive basis makes so that we use lots of degrees of freedom where they are needed (winter holiday) 
+and few where the effect is smooth. Alternatively, we could have added a factor for the winter period 
+(although one might point out that we have already included a dummy variable indicating bank holidays).
+
+4. mqgam fit and plotting effects for each quantile
+
+```{r edf6, message = F}
+nqu <- 5
+qus <- seq(0.1, 0.9, length.out = nqu)
+fitM <- mqgamV(form = form, data = UKload, err = 0.1, qu = qus)
+
+print(plot(fitM), pages = 1)
+```
+Notice that when the effects of low and high quantiles diverge, the conditional variance of the response is increasing (other things being equal). Along `wM_s95` we can also see that at low temperatures the load distribution is skewed to the right (again, other things being equal). Looking at the plot for `Posan`, look at how the Christmas effect changes depending on the quantile. The lowest quantiles, are more strongly effected: they go down and then bounce back. We couldn't get such insights with a Gaussian GAM! 
+
+We can also look at the parametric effects:
+```{r edf7, message = F}
+print(plot(fitM, allTerms = T, select = 5:7), pages = 1)
+```
+It is interesting to notice that the holiday effect is stronger (more negative) on the low quantiles.  
+
+7. Model checking
+
+We consider the third quantile (the median), first we look at the bias caused by smooth the loss:
+```{r edf576756, message = F}
+indx <- 3
+check(fitM[[indx]])
+```
+These checks mostly focus on the fraction of residuals falling below the fitted quantile, 
+which should be close to 0.5 given that we are fitting quantile $\tau = 0.5$.
+
+We can also verify whether the fraction of points falling below the fit depart too much from $\tau = 0.5$, 
+along each covariate:
+```{r edf12, message = F}
+
+pl <- list()
+pl[[1]] <- check1D(fitM[[indx]], x = "Dow") + l_gridQCheck1D(qu = qus[indx]) 
+pl[[2]] <- check1D(fitM[[indx]], x = "wM") + l_gridQCheck1D(qu = qus[indx]) 
+pl[[3]] <- check1D(fitM[[indx]], x = "wM_s95") + l_gridQCheck1D(qu = qus[indx])
+pl[[4]] <- check1D(fitM[[indx]], x = "Posan") + l_gridQCheck1D(qu = qus[indx]) 
+
+# To plot using grid.arrange, we need to extract the ggplot objects
+library(gridExtra)
+grid.arrange(grobs = lapply(pl, "[[", 1))
+```
+Looks good, most departures are within 80 percent confidence bands.
+

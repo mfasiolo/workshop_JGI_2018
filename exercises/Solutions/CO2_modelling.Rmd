@@ -1,0 +1,71 @@
+---
+title: "CO2 modelling: solution"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+<!--
+%\VignetteEngine{rmarkdown::render}
+%\VignetteIndexEntry{qgam_vignette}
+-->
+  
+```{r setup, include=FALSE}
+library(knitr)
+opts_chunk$set(out.extra='style="display:block; margin: auto"', fig.align="center", tidy=FALSE)
+```
+
+```{r setup1, include=FALSE}
+# Set workdir to source file location and then
+source(file = "my_settings.R")
+library(RhpcBLASctl); blas_set_num_threads(1)
+```
+
+1) Load data and packages
+```{r bone1, message = F}
+library(mgcv); library(gamair); 
+data(co2s)
+```
+
+2) Plot data
+```{r co2, message = F}
+with(co2s, plot(c.month, co2, type="l"))
+```
+
+3) Fit GAM model
+```{r co3, message = F}
+b <- gam(co2~s(c.month, bs="cr", k=100), data=co2s)
+```
+
+4) Use it for prediction
+```{r co4, message = F}
+co2plot <- function(co2s,b) {
+  fv <- predict(b,data.frame(c.month=1:543,month=c(rep(1:12,45),1:3)),se=TRUE)
+  ul <- fv$fit + 2*fv$se
+  ll <- fv$fit - 2*fv$se
+  with(co2s,plot(c.month,co2,pch=19,cex=.3,col=2,
+                 ylim=range(c(ul,ll)),xlim=c(0,550)))
+  lines(1:543,fv$fit)
+  lines(1:543,ul,lty=2)
+  lines(1:543,ll,lty=2)
+}
+
+co2plot(co2s,b) ## nonsense predictions - extrapolation artefact
+```
+
+5) Fit a better model
+```{r co5, message = F}
+b1 <- gam(co2~s(c.month,bs="cr",k=50)+s(month,bs="cc"),data=co2s,
+          knots=list(month=c(1,13)))
+```
+
+6) Predict again
+```{r co6, message = F}
+co2plot(co2s,b1)
+```
+This is much better, as the short-term seasonal effect has 
+been separated from long terms smooth terms, allowing longer range
+extrapolation of slow long range trend.
