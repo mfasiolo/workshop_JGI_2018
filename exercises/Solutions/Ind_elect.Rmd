@@ -49,7 +49,7 @@ pl[[3]] <- check2D(fit1, "day", "ID") + l_gridCheck2D(bw = c(NA, 5))
 library(gridExtra)
 grid.arrange(grobs = lapply(pl, "[[", "ggObj"), ncol = 2)
 ```
-Here the mean residuals are normalized using simulations from the model. Hence values <-2 or >2 are important, and here we have some massive deviations from zero. Costumer 27 seems particularly difficult to forecast:
+Here the mean residuals are normalized using simulations from the model. Hence values <-2 or >2 are important, and here we have some massive deviations from zero. Costumers 2 and 27 seems particularly difficult to forecast. Let's look at the latter:
 ```{r indiv1c, message = F}
 in27 <- which(indElec$ID == 27)
 par(mfrow = c(1, 2))
@@ -101,7 +101,7 @@ check(fit3)
 ```
 AIC is much lower, and the p-values reported by `check` are not significant now.
 
-4) We might consider including the effect of the lagged smoothed load:
+5) We might consider including the effect of the lagged smoothed load:
 ```{r indiv5, message = F}
 check2D(fit3, indElec$load48SM, indElec$ID) + l_gridCheck2D(bw = c(NA, 0.1))
 ```
@@ -124,7 +124,7 @@ check2D(fit4, indElec$load48SM, indElec$ID) + l_gridCheck2D()
 ```
 Deviations are now in the range [-4,+4], still large, but better than before. 
 
-5) Looking at some individual consumptions and predictions. Change the loop indexes to look at different costumers:
+6) Looking at some individual consumptions and predictions. Change the loop indexes to look at different costumers:
 ```{r indiv8, message = F}
 par(mfrow = c(3, 3), mar = c(2.1, 4.1, 1.1, 2.1))
 for(ID in 1:9){

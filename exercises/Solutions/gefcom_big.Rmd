@@ -88,7 +88,7 @@ pl <- lapply(c("NetDemand.24", "wM", "wM_s95", "Instant"),
 grid.arrange(grobs = pl, ncol = 2)
 ```
 
-Output of \verb|check1D| looks better than before, especially along `Instant` and `NetDemand.24` (however we still have some large deviations for low `NetDemand.24`).
+Output of \verb|check1D| looks better than before, especially along `Instant` and `NetDemand.24`.
 
 4) We start by looking for interactions with `Instant`:
 ```{r bam5, message = F}
