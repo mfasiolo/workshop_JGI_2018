@@ -42,9 +42,9 @@ All effects seem important, according to the p-values.
 interactions between `ID` and some of the other covariates:
 ```{r indiv1a, message = F}
 pl <- list()
-pl[[1]] <- check2D(fit1, "instant", "ID") + l_gridCheck2D(bw = c(NA, 1))
-pl[[2]] <- check2D(fit1, "temp", "ID") + l_gridCheck2D(bw = c(NA, 1))
-pl[[3]] <- check2D(fit1, "day", "ID") + l_gridCheck2D(bw = c(NA, 5))
+pl[[1]] <- check2D(fit1, "ID", "instant") + l_gridCheck2D(bw = c(NA, 1))
+pl[[2]] <- check2D(fit1, "ID", "temp") + l_gridCheck2D(bw = c(NA, 1))
+pl[[3]] <- check2D(fit1, "ID", "day") + l_gridCheck2D(bw = c(NA, 5))
 
 library(gridExtra)
 grid.arrange(grobs = lapply(pl, "[[", "ggObj"), ncol = 2)

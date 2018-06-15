@@ -68,7 +68,11 @@ There are still some departures from 0.5 along `Trial`, but there is some improv
 m1 <- qgamV(RT ~ InfFamSize + Age + te(LogFrequency, WordLength) + s(Trial) + s(Subject, bs="re"),
             data=est, qu=0.5)
 
-plotRGL(sm(m1, 1), residuals = T)
+print(plot(m1, allTerms = TRUE), pages = 1)
+```
+
+```{r est4a, message = F, eval = FALSE}
+plotRGL(sm(m1, 1), residuals = T) # will not appear in html
 rgl.close()
 ```
 The bivariate effect of `LogFrequency` and `WordLength` looks pretty linear to me! We are probably better off using two linear effects.

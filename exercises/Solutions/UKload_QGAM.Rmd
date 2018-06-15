@@ -40,7 +40,7 @@ fit <- qgamV(form = form, data = UKload, qu = qu, err = 0.1)
 print(plot(fit), pages = 1)
 summary(fit)
 ```
-The effect of `Posan` if fairly wiggly and drops sharply in the Christmas period.
+The effect of `Posan` is fairly wiggly and drops sharply in the Christmas period.
 
 3. Modify model formula and refit
 ```{r edf5, message = F}

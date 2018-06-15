@@ -45,7 +45,7 @@ lines(dbbmi$age, predict(fit1), col = 2)
 qq(fit1)
 ```
 
-Seems that residuals are skewed to the right. Let's do a conditional residual variance check:
+Seems that the residuals are skewed to the right. Let's do a conditional residual variance check:
 ```{r dbbmi3a, message = F}
 check1D(fit1, "age") + l_gridCheck1D(gridFun = sd)
 ```
@@ -60,13 +60,13 @@ qq(fit2)
 check1D(fit2, "age") + l_gridCheck1D(gridFun = sd)
 ```
 
-Non-constant variance problems seems more or less solved, but the residuals are still skewed to the right. 
+Non-constant variance problem seems more or less solved, but the residuals are still skewed to the right. 
 
 3) Check whether we should increase bases dimension:
 ```{r dbbmi6, message = F}
 tmp <- check(fit2)
 ```
-It seems so. It seems that `bmi` increase sharply at is the first year of life, maybe we should adopt an adaptive smooth for the mean model? 
+It seems so. It seems that mean `bmi` increases sharply during the first year of life, maybe we should adopt an adaptive smooth for the mean model? 
 ```{r dbbmi7, message = F}
 fit3 <- gamV(list(bmi ~ s(age, k = 20, bs = "ad"), ~ s(age, k = 20)), 
              data = dbbmi, family = gaulss, aViz = list(nsim = 50))
@@ -99,7 +99,7 @@ AIC(fit3, fit4)
 
 qq(fit4)
 ```
-Looks much better! And we get lower AIC. No re-plot smooth effects:
+Looks much better! And we get lower AIC. Now we re-plot the smooth effects:
 ```{r dbbmi12, message = F}
 print(plot(fit4), pages = 1)
 ```

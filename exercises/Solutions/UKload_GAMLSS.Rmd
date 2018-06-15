@@ -47,7 +47,7 @@ grid.arrange(grobs = pl, ncol = 2)
 ```
 Plots for `wM` and `wM_s95` are kind of fine. But in plot for `Posan`, we have positive mean residuals in January and negative in December. Maybe using a cyclic effect for `Posan` was a mistake: the effect at the beginning of January does not match that at the end of December! This might require more careful handling of winter holidays.
 
-3. Remove cyclic smooth and use `check.gam`
+3. Remove cyclic smooth and re-check:
 ```{r edf3, message = F}
 form <- NetDemand ~ s(wM,k=20,bs='cr') + 
                     s(wM_s95,k=20,bs='cr') + 
@@ -83,7 +83,7 @@ AIC( fit1, fit2 ) # Lower AIC!
 
 plot(sm(fit2, 3), n = 400) + l_points() + l_fitLine() + l_ciLine()
 ```
-We now look at the conditional variance of the residuals. First serie of checks:
+We now look at the conditional variance of the residuals. First series of checks:
 ```{r edf6, message = F}
 pl <- list()
 pl[[1]] <- ( check1D(fit2, "wM") + l_densCheck(n = c(100, 100), tol = -1) )$ggObj
@@ -92,7 +92,7 @@ pl[[3]] <- ( check1D(fit2, "Posan") + l_densCheck(n = c(100, 100), tol = -1) )$g
 
 grid.arrange(grobs = pl, ncol = 2) # Some evidence of heteroscedasticity
 ```
-The residuals seem over-dispersed for $wM < 20$ and for $Posan < 0.5$ or $Posan > 0.9$. Second serie of checks: 
+The residuals seem over-dispersed for `wM` < 20 and for `Posan` < 0.5 or `Posan` > 0.9. Second series of checks: 
 ```{r edf7, message = F}
 pl <- list()
 pl[[1]] <- ( check1D(fit2, "wM") + l_gridCheck1D(gridFun = sd, stand = "sc") )$ggObj
@@ -115,9 +115,6 @@ form <- list(NetDemand ~ s(wM,k=20,bs='cr') +
 
 fit3 <- gamV(form, family = gaulss, data = UKload, aViz = list(nsim = 50))
 
-# Add function for simulating residuals
-fit3$family$rd <- function(mu,wt,scale){ rnorm(nrow(mu), mu[ , 1], sqrt(scale/wt)/mu[ , 2]) }
-
 AIC(fit2, fit3) 
 ```
 The AIC has improved quite a lot. Now we repeat the variance checks:
@@ -133,7 +130,7 @@ There variance is much less variable, relative to the location-only Gaussian mod
 
 6. Looking at skewness. Now we do a global residual check using `qq`:
 ```{r edf10, message = F}
-qq(fit3, method = "simul1", rep = 50) 
+qq(fit3) 
 ```
 There is evidence of fat tails, and possibly skewness to the left. Let's look at how the skewness changes with the covariates:
 ```{r edf11, message = F}
@@ -158,7 +155,7 @@ form <- list(NetDemand ~ s(wM,k=20,bs='cr') +
                Dow, 
              ~ s(Posan, k = 10, bs='cr') + Dow, 
              ~ 1) # If convergence problems arise use
-                  # ~ -1 + s(Holy, bs = "re", sp = 1e6)
+                  # ~ -1 + s(Holy, bs = "re", sp = 1e6) in place of ~ 1
 
 fit4 <- gamV(form, family = shash, data = UKload, 
              aViz = list(nsim = 50))

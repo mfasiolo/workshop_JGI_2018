@@ -149,7 +149,7 @@ Residuals distribution looks good, maybe we should increase `k` for the year of 
 ```{r dbbmi13, message = F}
 print(plot(fit4), pages = 1)
 ```
-Increasing `k` does not seem reasonable, especially for the variance and skewness where this effect is not significant:
+Increasing `k` does not seem reasonable, especially for skewness where this effect is not significant:
 ```{r dbbmi14, message = F}
 summary(fit4)
 ```
