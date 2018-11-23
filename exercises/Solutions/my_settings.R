@@ -1,3 +1,3 @@
 
-goodLocation <- "~/Desktop/All/Dropbox/Work/Notes/Slides/qgam/2018_JGI/exercises"
+goodLocation <- "~/Desktop/All/Dropbox/Work/Notes/Slides/qgam/2018_UseR/exercises"
 #setwd(goodLocation)
